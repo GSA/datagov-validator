@@ -1,0 +1,28 @@
+name: 2 - Deploy
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release-staging:
+    name: Release staging
+    uses: ./.github/workflows/release-space.yml
+    with:
+      space: staging
+    secrets: inherit
+
+  release-prod:
+    name: Release production
+    needs: release-staging
+    uses: ./.github/workflows/release-space.yml
+    with:
+      space: prod
+    secrets: inherit

@@ -1,0 +1,10 @@
+app_name: datagov-validator
+space_name: prod
+route_external: validator.data.gov
+route_internal: datagov-validator-prod.apps.internal
+instances: 2
+memory_quota: 1G
+disk_quota: 2G
+
+# New Relic
+new_relic_monitor_mode: true

@@ -1,0 +1,34 @@
+#!/bin/bash
+
+set -o errexit
+set -o pipefail
+
+function vcap_get_service () {
+  local path name service_name
+  name="$1"
+  path="$2"
+  service_name=${APP_NAME}-${name}
+  echo $VCAP_SERVICES | jq --raw-output --arg service_name "$service_name" ".[][] | select(.name == \$service_name) | ($path | if . == null then empty else . end)"
+}
+
+export APP_NAME=$(echo $VCAP_APPLICATION | jq -r '.application_name')
+
+# New Relic. The only secret this app has - there is no database, and no
+# authentication to configure.
+export NEW_RELIC_LICENSE_KEY=$(vcap_get_service secrets .credentials.NEW_RELIC_LICENSE_KEY)
+
+echo "Setting CA Bundle.."
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+# egress proxy: URL submissions are fetched server-side, so this app needs
+# outbound access to wherever catalogs are published.
+echo "Setting up egress proxy.."
+if [ -z ${proxy_url+x} ]; then
+  echo "Egress proxy is not connected."
+else
+  echo "Egress proxy is enabled, excluding internal domains.."
+  export no_proxy=".apps.internal"
+  export http_proxy=$proxy_url
+  export https_proxy=$proxy_url
+fi

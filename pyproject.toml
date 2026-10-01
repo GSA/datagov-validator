@@ -1,0 +1,87 @@
+[tool.poetry]
+name = "datagov-validator"
+version = "0.1.0"
+description = "REST API for validating DCAT-US catalogs"
+authors = ["Datagov Team <datagov@gsa.gov>"]
+maintainers = ["Datagov Team <datagov@gsa.gov>"]
+readme = "README.md"
+packages = [{ include = "app" }]
+license = "LICENSE.md"
+repository = "https://github.com/GSA/datagov-validator"
+
+[tool.poetry.requires-plugins]
+poetry-plugin-export = ">=1.8"
+
+[tool.poetry.dependencies]
+python = "~3.12" # stay with 3.12 until *.apps.internal:61443 works for 3.13
+jsonschema = {extras = ["format"], version = "^4.26.0"}
+python-dotenv = ">=1"
+flask = "^3.1.3"
+apiflask = "^3.1.0"
+requests = "^2.32.4"
+gunicorn = ">=25.3,<27.0"
+newrelic = ">=12.1,<14.0"
+werkzeug = "^3.1.8" #SNYK-PYTHON-WERKZEUG-14908843
+urllib3 = ">=2.5.0" #SNYK-PYTHON-URLLIB3-10390193, SNYK-PYTHON-URLLIB3-10390194
+idna = ">=3.15,<4.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=9.0.3"
+ruff = ">=0.15.10,<0.17.0"
+pytest-cov = "^7.1.0"
+isort = ">=8.0.1,<10.0.0"
+black = "^26.3.1"
+pre-commit = "^4.5.1"
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "_external",
+]
+
+# Same as Black.
+line-length = 88
+
+target-version = "py312"
+
+[tool.ruff.lint]
+# Enable pycodestyle (`E`) and Pyflakes (`F`) codes by default.
+select = ["E", "F"]
+ignore = []
+
+fixable = ["ALL"]
+unfixable = []
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+# _external holds the GSA/dcat-us submodule, which ships its own .py files.
+# norecursedirs REPLACES pytest's defaults rather than extending them, so the
+# stock entries are restated here.
+norecursedirs = [
+    "_external",
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "node_modules",
+    "venv",
+    "{arch}",
+]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.isort]
+profile = "black"
+skip = [".poetry", ".venv", "_external"]
+
+[tool.black]
+extend-exclude = '^/_external/'

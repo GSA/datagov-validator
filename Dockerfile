@@ -1,0 +1,28 @@
+FROM python:3.12.14-alpine3.23
+
+# Pull the latest patched packages from the base distro.
+RUN apk upgrade --no-cache
+
+WORKDIR /app
+
+COPY . /app
+
+RUN pip install poetry
+
+# poetry try use virtualenv if .venv is present
+RUN poetry config virtualenvs.create false
+RUN rm -rf /app/.venv
+
+RUN poetry install --without=dev
+
+ARG DEV
+
+RUN if [ $DEV ]; \
+    then poetry install --with=dev; \
+    fi
+
+EXPOSE 8080
+
+ENV FLASK_APP=run.py
+
+CMD ["/bin/sh", "-c", "flask run --host=0.0.0.0 --port=8080"]

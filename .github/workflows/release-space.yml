@@ -1,0 +1,60 @@
+name: Release to a space
+
+on:
+  workflow_call:
+    inputs:
+      space:
+        description: "Cloud Foundry space"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release (${{ inputs.space }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.space }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+        with:
+          # cf push uploads this working tree, so the DCAT-US 3.0 schemas in
+          # _external/dcat-us have to be present here or the deployed app has
+          # none.
+          submodules: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.14"
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v4
+        with:
+          poetry-version: "latest"
+          poetry-plugins: "poetry-plugin-export"
+
+      - name: Add requirements.txt
+        run: make update-dependencies && cat requirements.txt
+
+      - name: Create required services
+        uses: cloud-gov/cg-cli-tools@main
+        with:
+          command: bash create_cloudgov_services.sh
+          cf_org: gsa-datagov
+          cf_space: ${{ inputs.space }}
+          cf_username: ${{ secrets.CF_SERVICE_USER }}
+          cf_password: ${{ secrets.CF_SERVICE_AUTH }}
+
+      - name: Deploy datagov-validator
+        uses: cloud-gov/cg-cli-tools@main
+        with:
+          command: >-
+            cf push datagov-validator --strategy rolling
+            --vars-file vars.${{ inputs.space }}.yml
+          cf_org: gsa-datagov
+          cf_space: ${{ inputs.space }}
+          cf_username: ${{ secrets.CF_SERVICE_USER }}
+          cf_password: ${{ secrets.CF_SERVICE_AUTH }}

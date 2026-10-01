@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      FLASK_APP: run.py
+      FLASK_DEBUG: "1"
+      # lets local catalogs (other compose services, localhost) be fetched by URL
+      ALLOW_PRIVATE_ADDRESSES: "true"
+    ports:
+      - "${PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    command:
+      - /bin/sh
+      - -c
+      - flask run --host=0.0.0.0 --port=8080 --debug --reload

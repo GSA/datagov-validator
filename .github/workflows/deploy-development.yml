@@ -1,0 +1,21 @@
+name: 1a - Deploy Development
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-develop
+  cancel-in-progress: false
+
+jobs:
+  release-development:
+    name: Release development
+    uses: ./.github/workflows/release-space.yml
+    with:
+      space: development
+    secrets: inherit

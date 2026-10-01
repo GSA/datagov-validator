@@ -1,0 +1,38 @@
+name: Publish image
+
+# ghcr.io/gsa/datagov-validator is what datagov-harvester's docker-compose.yml
+# runs locally and in its e2e tests, so its validator page has an API to call.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/gsa/datagov-validator:latest
+            ghcr.io/gsa/datagov-validator:${{ github.sha }}

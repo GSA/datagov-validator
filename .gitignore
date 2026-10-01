@@ -1,0 +1,17 @@
+.ruff_cache
+.DS_Store
+__pycache__/
+venv/
+.venv/
+dist/
+
+# env
+.env
+requirements.txt
+requirements-dev.txt
+
+#pytest
+.coverage
+.pytest_cache
+pytest-**.xml
+pytest-coverage-**.txt
