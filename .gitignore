@@ -15,3 +15,6 @@ requirements-dev.txt
 .pytest_cache
 pytest-**.xml
 pytest-coverage-**.txt
+
+# validate_catalog.py output
+scripts/validate_catalog/output/
