@@ -1,16 +1,20 @@
 ---
 applications:
-  # Public DCAT-US validation API. No database, no authentication. Reached three
-  # ways: its own public route, and over the internal route by the
-  # datagov-harvester admin app (its /validate/ page) and by
-  # datagov-harvest-proxy (which forwards harvest.data.gov/api/v1/validate
-  # here). Both of those need a network policy to this app on 61443 - they are
-  # added from datagov-harvester's release workflow.
+  # Public DCAT-US validation API. No database, no authentication. Reached
+  # over the internal route by the datagov-harvester admin app (its
+  # /validate/ page) and by datagov-harvest-proxy (which forwards
+  # harvest.data.gov/api/v1/validate here) - both need a network policy to
+  # this app on 61443, added from datagov-harvester's release workflow.
+  #
+  # ((route_external)) is not bound yet - validator-{dev,staging}.data.gov
+  # and validator.data.gov need a new custom domain registered on cloud.gov
+  # (DNS + `cf create-domain`/`external-domain` service) before it can be.
+  # EXTERNAL_ROUTE below only sets the OpenAPI spec's server URL, so this is
+  # safe to defer.
   - name: ((app_name))
     buildpacks:
       - python_buildpack
     routes:
-      - route: ((route_external))
       - route: ((route_internal))
     services:
       - ((app_name))-secrets
