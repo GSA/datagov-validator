@@ -1,3 +1,4 @@
+import itertools
 import json
 from unittest.mock import Mock
 
@@ -282,6 +283,8 @@ class TestRefusedUrlIsExplained:
         }
 
     def test_timeout(self, client, monkeypatch):
+        clock = itertools.chain([100.0, 100.0], itertools.repeat(200.0))
+        monkeypatch.setattr("app.fetch.time.monotonic", lambda: next(clock))
         monkeypatch.setattr(
             "app.fetch.requests.get",
             Mock(side_effect=requests.exceptions.Timeout("timed out")),
@@ -291,6 +294,17 @@ class TestRefusedUrlIsExplained:
 
         assert res.status_code == 400
         assert f"longer than {FETCH_TIMEOUT_SECONDS} seconds" in res.get_json()["error"]
+
+    def test_connect_timeout(self, client, monkeypatch):
+        monkeypatch.setattr(
+            "app.fetch.requests.get",
+            Mock(side_effect=requests.exceptions.ConnectTimeout("syn lost")),
+        )
+
+        res = client.post(URL, json=self._url_form("https://example.com/flaky.json"))
+
+        assert res.status_code == 400
+        assert "Could not connect to the URL's server" in res.get_json()["error"]
 
     def test_private_address(self, client, monkeypatch):
         monkeypatch.setattr("app.fetch.ALLOW_PRIVATE_ADDRESSES", False)

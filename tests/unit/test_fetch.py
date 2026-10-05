@@ -103,18 +103,60 @@ class TestFetchJsonFromUrl:
         mock_response.close.assert_called_once()
 
     @patch("app.fetch.requests.get")
-    def test_fetch_json_from_url_times_out(self, mock_get, caplog):
+    def test_fetch_json_from_url_times_out(self, mock_get, caplog, monkeypatch):
         """A hung/unresponsive target raises a clear, logged ValueError instead
         of hanging the worker indefinitely."""
-        mock_get.side_effect = requests.exceptions.Timeout("timed out")
+        # deadline set at t=100; the timeout surfaces once it has passed
+        exhausted = 100.0 + FETCH_TIMEOUT_SECONDS
+        clock = itertools.chain([100.0, 100.0], itertools.repeat(exhausted))
+        monkeypatch.setattr("app.fetch.time.monotonic", lambda: next(clock))
+        mock_get.side_effect = requests.exceptions.ReadTimeout("timed out")
 
-        with pytest.raises(ValueError, match="took longer than"):
+        with pytest.raises(
+            ValueError, match=f"took longer than {FETCH_TIMEOUT_SECONDS} seconds"
+        ):
             fetch_json_from_url("https://example.com/slow.json")
 
         assert any(
             "timed out" in record.message and "example.com/slow.json" in record.message
             for record in caplog.records
         )
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            requests.exceptions.ConnectTimeout("syn lost"),
+            # how requests reports a TLS handshake stalled past the connect timeout
+            requests.exceptions.ReadTimeout("handshake stalled"),
+        ],
+    )
+    @patch("app.fetch.requests.get")
+    def test_fetch_json_from_url_connect_phase_timeout(
+        self, mock_get, caplog, monkeypatch, error
+    ):
+        """A timeout well before the deadline is the connect limit firing, so
+        it isn't reported as the whole budget running out."""
+        early = 100.0 + FETCH_CONNECT_TIMEOUT_SECONDS
+        clock = itertools.chain([100.0, 100.0], itertools.repeat(early))
+        monkeypatch.setattr("app.fetch.time.monotonic", lambda: next(clock))
+        mock_get.side_effect = error
+
+        with pytest.raises(InvalidCatalogSource, match="Could not connect"):
+            fetch_json_from_url("https://example.com/flaky.json")
+
+        assert any(
+            "could not connect" in record.message
+            and "example.com/flaky.json" in record.message
+            for record in caplog.records
+        )
+
+    def test_connect_limit_fits_inside_the_fetch_budget(self):
+        """Some hosts lose a handshake packet that TCP retransmits ~7s later;
+        and validation (up to ~12s at 10MB) has to fit after the fetch inside
+        CloudFront's 30s, with padding."""
+        assert FETCH_CONNECT_TIMEOUT_SECONDS >= 8
+        assert FETCH_CONNECT_TIMEOUT_SECONDS < FETCH_TIMEOUT_SECONDS
+        assert FETCH_TIMEOUT_SECONDS + 12 <= 25
 
     @patch("app.fetch.requests.get")
     def test_fetch_json_from_url_passes_timeout_to_requests(self, mock_get):

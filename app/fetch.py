@@ -69,21 +69,23 @@ PAYLOAD_TOO_LARGE_MESSAGE = (
     f"JSON payload too large - must be {MAX_UPLOAD_MB}MB or less."
 )
 
-# Bounded well inside every ceiling upstream of us: gunicorn's 120s worker
-# timeout, datagov-harvest-proxy's proxy_read_timeout (110s) for forwarded
-# /api/v1/validate requests, and a client-facing limit somewhere near 30s
-# (CloudFront or the CF router).
-# Answering well before any of them means a slow or hung target produces a
-# clean, logged rejection instead of us being disconnected mid-request.
+# The binding ceiling is CloudFront's hard 30s for the whole request
+# (harvest.data.gov/api/v1/validate), and validation only starts once the
+# fetch is done: roughly 0.5-1.2 s/MB, so up to ~12s for a 10MB catalog. 12s
+# here keeps that worst case near 25s, leaving padding for proxy hops.
+# Answering inside the ceiling means a slow or hung target produces a clean,
+# logged rejection instead of us being disconnected mid-request.
 #
 # It is also a capacity limit, not just a latency one: gunicorn runs 3 workers
 # with 1 thread each, so each in-flight fetch holds one of only 3 concurrent
 # slots per instance. The connect phase gets a tighter budget of its own
 # because a dead, typo'd, or firewalled host is almost always a connect
 # failure, and there's no reason to hold a slot for the full budget to learn
-# that.
-FETCH_TIMEOUT_SECONDS = 10
-FETCH_CONNECT_TIMEOUT_SECONDS = 5
+# that. It can't be much tighter, though: from cloud.gov, some hosts
+# (data.nola.gov) intermittently lose a handshake packet, and TCP's
+# retransmits recover it at ~3s or ~7s - 5s cut those off.
+FETCH_TIMEOUT_SECONDS = 12
+FETCH_CONNECT_TIMEOUT_SECONDS = 8
 
 # requests.get(..., allow_redirects=True) (the default) follows redirects
 # without re-checking the target, so a URL that itself resolves to a public IP
@@ -222,6 +224,19 @@ def fetch_json_from_url(url: str) -> dict:
                     raise InvalidCatalogSource(PAYLOAD_TOO_LARGE_MESSAGE)
                 chunks.append(chunk)
     except requests.exceptions.Timeout:
+        # A stalled TLS handshake is bounded by the connect timeout but raised
+        # as ReadTimeout, so the exception type can't tell the phases apart;
+        # whether the overall deadline was reached can.
+        if time.monotonic() < deadline - 0.5:
+            logger.warning(
+                "Validator URL fetch could not connect within %ss url=%s",
+                FETCH_CONNECT_TIMEOUT_SECONDS,
+                url,
+            )
+            raise InvalidCatalogSource(
+                "Could not connect to the URL's server in time. Check that the "
+                "URL is correct and the server is up, then try again."
+            )
         logger.warning(
             "Validator URL fetch timed out after %ss url=%s",
             FETCH_TIMEOUT_SECONDS,
