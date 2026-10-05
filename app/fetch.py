@@ -78,14 +78,18 @@ PAYLOAD_TOO_LARGE_MESSAGE = (
 #
 # It is also a capacity limit, not just a latency one: gunicorn runs 3 workers
 # with 1 thread each, so each in-flight fetch holds one of only 3 concurrent
-# slots per instance. The connect phase gets a tighter budget of its own
-# because a dead, typo'd, or firewalled host is almost always a connect
-# failure, and there's no reason to hold a slot for the full budget to learn
-# that. It can't be much tighter, though: from cloud.gov, some hosts
-# (data.nola.gov) intermittently lose a handshake packet, and TCP's
-# retransmits recover it at ~3s or ~7s - 5s cut those off.
+# slots per instance.
+#
+# From cloud.gov, some hosts (data.nola.gov) lose a handshake packet on 10-25%
+# of connections. TCP's own retransmits back off (handshakes measured at 3s,
+# 9s, 17s), so waiting longer on one connection can't fit the budget, but a
+# fresh connection almost always completes in well under a second. So each
+# connect attempt is short - long enough for a single quick retransmit - and
+# a connect-phase timeout is retried on a new connection, all inside the one
+# deadline. A dead host still fails by FETCH_TIMEOUT_SECONDS.
 FETCH_TIMEOUT_SECONDS = 12
-FETCH_CONNECT_TIMEOUT_SECONDS = 8
+FETCH_CONNECT_TIMEOUT_SECONDS = 4
+FETCH_CONNECT_ATTEMPTS = 3
 
 # requests.get(..., allow_redirects=True) (the default) follows redirects
 # without re-checking the target, so a URL that itself resolves to a public IP
@@ -174,20 +178,51 @@ def fetch_json_from_url(url: str) -> dict:
             )
         return remaining
 
+    connect_timeouts = 0
+    connecting = False
+
+    def _get(target: str) -> requests.Response:
+        nonlocal connect_timeouts, connecting
+        connecting = True
+        while True:
+            remaining = _remaining_budget()
+            try:
+                # requests.get opens a new connection every call, so a retry
+                # doesn't reuse the stalled one.
+                result = requests.get(
+                    target,
+                    headers={"User-Agent": USER_AGENT},
+                    stream=True,
+                    timeout=(
+                        min(FETCH_CONNECT_TIMEOUT_SECONDS, remaining),
+                        remaining,
+                    ),
+                    allow_redirects=False,
+                )
+            except requests.exceptions.Timeout:
+                # A stalled TLS handshake is bounded by the connect timeout but
+                # raised as ReadTimeout, so the exception type can't tell the
+                # phases apart. A timeout well before the deadline can only be
+                # the connect limit; one at the deadline is the budget running
+                # out, which retrying can't help.
+                if time.monotonic() >= deadline - 0.5:
+                    raise
+                connect_timeouts += 1
+                if connect_timeouts >= FETCH_CONNECT_ATTEMPTS:
+                    raise
+                logger.info(
+                    "Validator URL fetch connect attempt %s timed out, retrying url=%s",
+                    connect_timeouts,
+                    target,
+                )
+                continue
+            connecting = False
+            return result
+
     response = None
     try:
         for _ in range(MAX_FETCH_REDIRECTS + 1):
-            remaining = _remaining_budget()
-            response = requests.get(
-                url,
-                headers={"User-Agent": USER_AGENT},
-                stream=True,
-                timeout=(
-                    min(FETCH_CONNECT_TIMEOUT_SECONDS, remaining),
-                    remaining,
-                ),
-                allow_redirects=False,
-            )
+            response = _get(url)
             if response.status_code not in _REDIRECT_STATUS_CODES:
                 break
 
@@ -224,13 +259,11 @@ def fetch_json_from_url(url: str) -> dict:
                     raise InvalidCatalogSource(PAYLOAD_TOO_LARGE_MESSAGE)
                 chunks.append(chunk)
     except requests.exceptions.Timeout:
-        # A stalled TLS handshake is bounded by the connect timeout but raised
-        # as ReadTimeout, so the exception type can't tell the phases apart;
-        # whether the overall deadline was reached can.
-        if time.monotonic() < deadline - 0.5:
+        if connecting and connect_timeouts:
             logger.warning(
-                "Validator URL fetch could not connect within %ss url=%s",
-                FETCH_CONNECT_TIMEOUT_SECONDS,
+                "Validator URL fetch could not connect in time "
+                "connect_timeouts=%s url=%s",
+                connect_timeouts,
                 url,
             )
             raise InvalidCatalogSource(
