@@ -5,11 +5,22 @@ import pytest
 import requests
 
 from app.fetch import (
+    FETCH_CONNECT_ATTEMPTS,
     FETCH_CONNECT_TIMEOUT_SECONDS,
     FETCH_TIMEOUT_SECONDS,
     InvalidCatalogSource,
     fetch_json_from_url,
 )
+
+
+def _json_response(body=b'{"dataset": []}'):
+    response = Mock()
+    response.status_code = 200
+    response.headers = {"Content-Type": "application/json"}
+    response.raise_for_status = Mock()
+    response.close = Mock()
+    response.iter_content = Mock(return_value=[body])
+    return response
 
 
 class TestFetchJsonFromUrl:
@@ -134,8 +145,9 @@ class TestFetchJsonFromUrl:
     def test_fetch_json_from_url_connect_phase_timeout(
         self, mock_get, caplog, monkeypatch, error
     ):
-        """A timeout well before the deadline is the connect limit firing, so
-        it isn't reported as the whole budget running out."""
+        """A connect-phase timeout is retried on a fresh connection, and once
+        the attempts run out it's reported as a connect failure, not as the
+        whole budget running out."""
         early = 100.0 + FETCH_CONNECT_TIMEOUT_SECONDS
         clock = itertools.chain([100.0, 100.0], itertools.repeat(early))
         monkeypatch.setattr("app.fetch.time.monotonic", lambda: next(clock))
@@ -144,18 +156,72 @@ class TestFetchJsonFromUrl:
         with pytest.raises(InvalidCatalogSource, match="Could not connect"):
             fetch_json_from_url("https://example.com/flaky.json")
 
+        assert mock_get.call_count == FETCH_CONNECT_ATTEMPTS
         assert any(
             "could not connect" in record.message
             and "example.com/flaky.json" in record.message
             for record in caplog.records
         )
 
-    def test_connect_limit_fits_inside_the_fetch_budget(self):
-        """Some hosts lose a handshake packet that TCP retransmits ~7s later;
-        and validation (up to ~12s at 10MB) has to fit after the fetch inside
-        CloudFront's 30s, with padding."""
-        assert FETCH_CONNECT_TIMEOUT_SECONDS >= 8
-        assert FETCH_CONNECT_TIMEOUT_SECONDS < FETCH_TIMEOUT_SECONDS
+    @pytest.mark.parametrize(
+        "error",
+        [
+            requests.exceptions.ConnectTimeout("syn lost"),
+            requests.exceptions.ReadTimeout("handshake stalled"),
+        ],
+    )
+    @patch("app.fetch.requests.get")
+    def test_fetch_json_from_url_retries_a_stalled_connect(self, mock_get, error):
+        """The data.nola.gov case: one connection's handshake stalls, the next
+        connects straight away."""
+        mock_get.side_effect = [error, _json_response()]
+
+        assert fetch_json_from_url("https://example.com/flaky.json") == {"dataset": []}
+        assert mock_get.call_count == 2
+
+    @patch("app.fetch.requests.get")
+    def test_fetch_json_from_url_does_not_retry_at_the_deadline(
+        self, mock_get, monkeypatch
+    ):
+        """A server that connected but never answered used the whole budget;
+        retrying can't help, and it's reported as the budget running out."""
+        exhausted = 100.0 + FETCH_TIMEOUT_SECONDS
+        clock = itertools.chain([100.0, 100.0], itertools.repeat(exhausted))
+        monkeypatch.setattr("app.fetch.time.monotonic", lambda: next(clock))
+        mock_get.side_effect = requests.exceptions.ReadTimeout("no response")
+
+        with pytest.raises(InvalidCatalogSource, match="took longer than"):
+            fetch_json_from_url("https://example.com/slow.json")
+
+        assert mock_get.call_count == 1
+
+    @patch("app.fetch.requests.get")
+    def test_fetch_json_from_url_body_timeout_after_a_retry(
+        self, mock_get, monkeypatch
+    ):
+        """Once connected, running out of budget mid-download is a slow
+        response, even if an earlier connect attempt was retried."""
+        # deadline, attempt 1, its timeout check, attempt 2 - then the budget
+        # is gone by the first downloaded chunk
+        clock = itertools.chain([100.0] * 4, itertools.repeat(200.0))
+        monkeypatch.setattr("app.fetch.time.monotonic", lambda: next(clock))
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("syn lost"),
+            _json_response(),
+        ]
+
+        with pytest.raises(InvalidCatalogSource, match="took longer than"):
+            fetch_json_from_url("https://example.com/slow-body.json")
+
+    def test_connect_attempts_fit_inside_the_fetch_budget(self):
+        """Every connect attempt fits inside the one deadline, each allows for
+        a quick SYN retransmit (~1s, then ~3s), and validation (up to ~12s at
+        10MB) has to fit after the fetch inside CloudFront's 30s, with
+        padding."""
+        assert FETCH_CONNECT_TIMEOUT_SECONDS >= 3.5
+        assert FETCH_CONNECT_TIMEOUT_SECONDS * FETCH_CONNECT_ATTEMPTS <= (
+            FETCH_TIMEOUT_SECONDS
+        )
         assert FETCH_TIMEOUT_SECONDS + 12 <= 25
 
     @patch("app.fetch.requests.get")
