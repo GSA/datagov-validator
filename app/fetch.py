@@ -70,10 +70,9 @@ PAYLOAD_TOO_LARGE_MESSAGE = (
 )
 
 # Bounded well inside every ceiling upstream of us: gunicorn's 120s worker
-# timeout, the datagov-harvester admin app's timeout calling this service and
-# its proxy's proxy_read_timeout (110s) for forwarded /api/v1/validate
-# requests, and a client-facing limit somewhere near 30s (CloudFront or the CF
-# router).
+# timeout, datagov-harvest-proxy's proxy_read_timeout (110s) for forwarded
+# /api/v1/validate requests, and a client-facing limit somewhere near 30s
+# (CloudFront or the CF router).
 # Answering well before any of them means a slow or hung target produces a
 # clean, logged rejection instead of us being disconnected mid-request.
 #

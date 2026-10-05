@@ -2,7 +2,7 @@
 
 A small REST API that validates [DCAT-US](https://resources.data.gov/resources/dcat-us3/) catalogs against the DCAT-US 1.1 (federal / non-federal dataset) and DCAT-US 3.0 (catalog) JSON Schemas.
 
-It has no database and no authentication. Its one job is the validation that used to live inside [GSA/datagov-harvester](https://github.com/GSA/datagov-harvester); the harvester's `/validate/` page now calls this service, and `harvest.data.gov/api/v1/validate` is forwarded here by the harvester's proxy.
+It has no database and no authentication. Its one job is the validation that used to live inside [GSA/datagov-harvester](https://github.com/GSA/datagov-harvester); the harvester's proxy forwards `harvest.data.gov/api/v1/validate` here, both for existing API callers and for the harvester's `/validate/` page, which submits to that path from the browser.
 
 ## API
 
@@ -76,7 +76,7 @@ cp .env.sample .env
 make up       # http://localhost:8081
 ```
 
-To use it from a local datagov-harvester, point that app's `VALIDATOR_API_URL` at `http://localhost:8081/api/v1/validate`.
+datagov-harvester's own `docker compose` runs this image as its `validator` service and puts a small nginx proxy in front, so its `/validate/` page reaches it as in a deployed space. To try a local checkout there, build it and set that repo's `VALIDATOR_IMAGE` (see its `docs/developer.md`).
 
 ## Code shared with datagov-harvester
 
@@ -105,7 +105,7 @@ URL submissions are fetched server-side, so the app needs outbound internet acce
 
 GitHub Actions deploys `develop` to development and `main` to staging, then prod. The workflows need `CF_SERVICE_USER`/`CF_SERVICE_AUTH` secrets in the `development`, `staging` and `prod` environments.
 
-datagov-harvester's release workflow adds the network policies that let `datagov-harvest` and `datagov-harvest-proxy` reach this app on port 61443, so deploy this app to a space before that harvester release.
+datagov-harvester's release workflow adds the network policy that lets `datagov-harvest-proxy` reach this app on port 61443, so deploy this app to a space before that harvester release.
 
 ## Public domain
 
